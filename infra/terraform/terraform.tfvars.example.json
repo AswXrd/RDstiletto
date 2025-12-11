@@ -1,0 +1,11 @@
+{
+  "project_id": "sesac-effi3elov3",
+  "region": "asia-northeast3",
+  "zone": "asia-northeast3-a",
+  "project_name": "stiletto-redirector",
+  "home_ip": "203.0.113.45",
+  "public_key": "ssh-ed25519 AAAA... user@host",
+  "machine_type": "e2-micro",
+  "enable_docker": true,
+  "docker_image": "asia-northeast3-docker.pkg.dev/sesac-effi3elov3/stiletto-web/gcp_dockerized:1.0.0"
+}

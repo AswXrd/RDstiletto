@@ -1,0 +1,30 @@
+# === Node.js / Next.js ===
+node_modules/
+.next/
+out/
+dist/
+*.log
+
+# === Python / FastAPI ===
+__pycache__/
+*.pyc
+venv/
+.env
+.env.*
+
+# === Docker ===
+*.pid
+docker-data/
+
+# === Terraform ===
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/terraform.tfvars
+infra/terraform.tfvars.json
+infra/*.backup
+
+# === Secrets ===
+secrets/*.json
+secrets/*.key
+secrets/*.pem

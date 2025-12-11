@@ -1,0 +1,73 @@
+# version: "3.9"
+# services:
+#   backend:
+#     build:
+#       context: ./backend
+#       dockerfile: Dockerfile
+#     container_name: stiletto-backend
+#     environment:
+#       - PORT=8080
+#       - GCP_PROJECT_ID=sesac-effi3elov3
+#       - GCP_REGION=asia-northeast3
+#       - GCP_ZONE=asia-northeast3-a
+#       - PROJECT_NAME=knu-effi3elov3
+#       - TF_DIR=/data/tf
+#       - GOOGLE_APPLICATION_CREDENTIALS=/creds/sa.json
+#     ports:
+#       - "8080:8080"
+#     volumes:
+#       - tfstate:/data/tf
+#       - ./backend/creds:/creds:ro
+#     restart: unless-stopped
+
+#   frontend:
+#     build:
+#       context: ./frontend
+#       dockerfile: Dockerfile
+#     container_name: stiletto-frontend
+#     environment:
+#       - NEXT_PUBLIC_API_BASE=http://backend:8080
+#     ports:
+#       - "3000:3000"
+#     depends_on:
+#       - backend
+#     restart: unless-stopped
+
+# volumes:
+#   tfstate:
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      # 프론트에서 API 호출을 '/api' 상대경로로 하도록
+      NEXT_PUBLIC_API_BASE: /api
+    networks: [stiletto]
+    depends_on: [backend]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      TF_DIR: /app/infra/terraform
+      TF_VARS_PATH: /app/infra/terraform/terraform.tfvars.json
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/sa-key.json
+    volumes:
+      - ./infra:/app/infra
+      - ./secrets/sa-key.json:/secrets/sa-key.json:ro
+    networks: [stiletto]
+
+  proxy:
+    image: nginx:stable
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+    depends_on: [frontend, backend]
+    networks: [stiletto]
+
+networks:
+  stiletto: {}
