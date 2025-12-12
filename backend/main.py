@@ -264,9 +264,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional
+import google.generativeai as genai
 
 # uvicorn main:app 가 찾는 이름은 "app"
-app = FastAPI(title="Stiletto GCP Backend", version="0.1.0")
+app = FastAPI(title="Stiletto GCP Backend", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -283,6 +284,10 @@ GCP_REGION = os.getenv("GCP_REGION", "asia-northeast3")
 GCP_ZONE = os.getenv("GCP_ZONE", "asia-northeast3-a")
 PROJECT_NAME = os.getenv("PROJECT_NAME", "knu-effi3elov3")
 
+# Gemini API 설정
+GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 class DeployVars(BaseModel):
     project_id: str = Field(default_factory=lambda: GCP_PROJECT_ID)
@@ -290,7 +295,6 @@ class DeployVars(BaseModel):
     zone: str = Field(default_factory=lambda: GCP_ZONE)
     project_name: str = Field(default_factory=lambda: PROJECT_NAME)
 
-    # "61.80.203.117" 또는 "61.80.203.117/32" 둘 다 허용
     home_cidr: str
 
     ssh_username: str = "ubuntu"
@@ -374,10 +378,12 @@ def destroy():
 
 class AnalyzeRequest(BaseModel):
     since: Optional[str] = None  # ISO8601 (없으면 최근 1시간)
+    use_ai: bool = False         # AI 분석 사용 여부 추가
 
 
 @app.post("/logs/analyze")
 def analyze(req: AnalyzeRequest):
+    # 1. 시간 설정 (기본 1시간 전)
     since = (
         req.since
         or (datetime.datetime.utcnow() - datetime.timedelta(hours=1))
@@ -385,6 +391,8 @@ def analyze(req: AnalyzeRequest):
         .isoformat()
         + "Z"
     )
+    
+    # 2. 로그 필터 구성 및 조회
     instance_name = f"{PROJECT_NAME}-redirector"
     filt = (
         'resource.type="gce_instance" '
@@ -392,26 +400,74 @@ def analyze(req: AnalyzeRequest):
         f'timestamp>="{since}" '
         '(textPayload:"nginx" OR textPayload:"sshd" OR "Failed password" OR "Accepted password")'
     )
-    cmd = f"gcloud logging read {shlex.quote(filt)} --project {GCP_PROJECT_ID} --format=json --limit=1000"
+    
+    cmd = f"gcloud logging read {shlex.quote(filt)} --project {GCP_PROJECT_ID} --format=json --limit=500"
     proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    
     if proc.returncode != 0:
         raise HTTPException(status_code=500, detail=proc.stderr)
 
     try:
         entries = json.loads(proc.stdout or "[]")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Log parsing failed: {str(e)}")
 
-    total = len(entries)
+    # 3. 기본 통계 계산
     def _tp(e): return (e.get("textPayload") or "")
+    
+    logs_summary = []
+    for e in entries:
+        ts = e.get("timestamp", "")
+        payload = _tp(e)
+        logs_summary.append(f"[{ts}] {payload}")
+
     ssh_failed = sum(1 for e in entries if "Failed password" in _tp(e))
     ssh_ok = sum(1 for e in entries if "Accepted password" in _tp(e))
     nginx_hits = sum(1 for e in entries if ("GET " in _tp(e)) or ("POST " in _tp(e)))
 
-    return {
-        "since": since,
-        "total": total,
+    stats = {
+        "total": len(entries),
         "ssh_failed": ssh_failed,
         "ssh_accepted": ssh_ok,
         "nginx_hits": nginx_hits,
+    }
+
+    # 4. Gemini AI 분석 실행
+    ai_report = "AI analysis not requested or API Key missing."
+    if req.use_ai:
+        if not GEMINI_API_KEY:
+            ai_report = "Error: GOOGLE_API_KEY environment variable is not set."
+        elif not logs_summary:
+            ai_report = "No logs found to analyze."
+        else:
+            try:
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                
+                # 로그 샘플링 (토큰 제한 고려하여 앞부분 100줄만)
+                log_context = "\n".join(logs_summary[:100])
+                
+                prompt = f"""
+                You are a cybersecurity expert. Analyze the following server logs (Nginx & SSH) for suspicious activities.
+                
+                Logs (Sample):
+                {log_context}
+                
+                Task:
+                1. Identify any potential attacks (e.g., SQL Injection, XSS, Brute Force, Scanners).
+                2. Summarize the traffic patterns.
+                3. Recommend security actions if needed.
+                
+                Output format: Markdown.
+                """
+                
+                response = model.generate_content(prompt)
+                ai_report = response.text
+            except Exception as e:
+                ai_report = f"AI Analysis Failed: {str(e)}"
+
+    return {
+        "since": since,
+        "stats": stats,
+        "ai_report": ai_report,
+        "raw_logs_sample": logs_summary[:20]  # 프론트엔드 표시용 샘플
     }
