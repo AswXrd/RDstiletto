@@ -23,6 +23,11 @@ infra/*.tfstate.*
 infra/terraform.tfvars
 infra/terraform.tfvars.json
 infra/*.backup
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
 
 # === Secrets ===
 secrets/*.json
